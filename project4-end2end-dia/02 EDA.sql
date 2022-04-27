@@ -53,13 +53,7 @@
 
 -- COMMAND ----------
 
--- MAGIC %python
--- MAGIC 
--- MAGIC sql_statement = """
--- MAGIC SELECT MIN(block_number) FROM token_transfers
--- MAGIC """
--- MAGIC df = spark.sql(sql_statement)
--- MAGIC display(df)
+SELECT MIN(block_number) FROM token_transfers
 
 -- COMMAND ----------
 
@@ -87,6 +81,13 @@ SELECT
   COUNT(DISTINCT contract_address)
 FROM token_prices_usd 
 WHERE asset_platform_id = 'ethereum' AND substr(contract_address, 1, 2) = '0x'
+
+-- COMMAND ----------
+
+SELECT
+  COUNT(DISTINCT address)
+FROM silver_contracts
+WHERE is_erc20 = "True"
 
 -- COMMAND ----------
 
