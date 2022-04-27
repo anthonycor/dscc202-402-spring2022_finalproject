@@ -182,7 +182,12 @@ FROM blocks
 
 -- COMMAND ----------
 
--- TBD
+-- MAGIC %sql
+-- MAGIC SELECT sum(total_supply)/1000000000000000000 as ether_volume
+-- MAGIC FROM (SELECT *
+-- MAGIC FROM token_prices_usd
+-- MAGIC LEFT JOIN tokens
+-- MAGIC ON token_prices_usd.symbol = tokens.symbol)
 
 -- COMMAND ----------
 
