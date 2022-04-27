@@ -77,10 +77,12 @@ FROM token_transfers
 
 -- COMMAND ----------
 
+-- This assumes all tokens are ERC20
 SELECT COUNT(DISTINCT address) FROM tokens
 
 -- COMMAND ----------
 
+-- Count unique valid etheruem token [contract] addresses
 SELECT 
   COUNT(DISTINCT contract_address)
 FROM token_prices_usd 
@@ -93,8 +95,12 @@ WHERE asset_platform_id = 'ethereum' AND substr(contract_address, 1, 2) = '0x'
 
 -- COMMAND ----------
 
--- MAGIC %python
--- MAGIC ## NO IDEA WHAT IN THE HELL a CALLS to CONTRACTS IS
+SELECT
+  SUM(CAST((C.address IS NOT NULL) AS INTEGER)) as to_contract,
+  COUNT(1) as total_transactions,
+  SUM(CAST((C.address IS NOT NULL) AS INTEGER))/COUNT(1) as percentage
+FROM transactions T
+LEFT JOIN contracts C ON C.address = T.to_address
 
 -- COMMAND ----------
 
@@ -118,36 +124,18 @@ LIMIT 100
 
 -- COMMAND ----------
 
--- Brooke
-Select Count(*)
-FROM Token_Transfers
--- Total # of transfers = 922029708
-
--- COMMAND ----------
-
--- Brooke
-SELECT *
-FROM Token_Transfers
-WHERE value == 1
-
--- There are multiple lines of the same token address going to the same to_address is this just an amount of token?
-
--- COMMAND ----------
-
--- Brooke
-SELECT COUNT(*)/922029708
-FROM Token_Transfers
-WHERE value == 1
--- Number of transactions with transfer count (value) = 1/ total number of transactions
--- fraction of ERC-20 transfers are sent to new addresses = 0.0019443831195946671
-
--- COMMAND ----------
-
--- Stefano
-SELECT token_address, from_address, Count(*)
-FROM token_transfers
-group by token_address, from_address
-HAVING count(*) = 1
+-- Refactor Stefano's answer to be a fraction not just the 
+-- individual rows where transaction count to address is 1
+SELECT
+  SUM(CAST((transaction_count = 1) AS INTEGER)) as single_transfers,
+  COUNT(1) as total_transfers,
+  SUM(CAST((transaction_count = 1) AS INTEGER))/COUNT(1) as percentage
+FROM (
+  SELECT 
+    token_address, to_address, COUNT(transaction_hash) as transaction_count
+  FROM token_transfers
+  GROUP BY token_address, to_address
+)
 
 -- COMMAND ----------
 
@@ -164,7 +152,7 @@ HAVING count(*) = 1
 -- last partition of block table
 SELECT number, transaction_count
 FROM blocks
-WHERE start_block>=14030000 start_block>=14030000 and transaction_count > 1
+WHERE start_block>=14030000 and transaction_count > 1
 LIMIT 10
 */
 
@@ -215,16 +203,12 @@ FROM Receipts
 
 -- COMMAND ----------
 
--- MAGIC %python
--- MAGIC 
--- MAGIC sql_statement = """
--- MAGIC SELECT block_number, COUNT(hash) FROM transactions
--- MAGIC     GROUP BY block_number
--- MAGIC         ORDER BY block_number DESC
--- MAGIC             LIMIT 1
--- MAGIC """
--- MAGIC df = spark.sql(sql_statement)
--- MAGIC display(df)
+SELECT 
+  block_number, COUNT(transaction_hash) transfer_count
+FROM token_transfers
+GROUP BY block_number
+ORDER BY COUNT(transaction_hash) DESC
+LIMIT 1
 
 -- COMMAND ----------
 
@@ -255,18 +239,61 @@ FROM Receipts
 
 -- COMMAND ----------
 
+-- Anthony's attempt to INNER JOIN token_transfers and blocks
+-- and sum values for each token_address for transfers on or before
+-- date for given wallet address
+%python
+sqlContext.setConf('spark.sql.shuffle.partitions', 'auto')
+ 
+sql_statement = """
+SELECT
+  token_address, 
+  SUM(
+    CASE
+      WHEN from_address = '{wallet_address}' THEN -1*value
+      ELSE value
+    END
+   ) as value
+FROM token_transfers T
+INNER JOIN blocks B ON 
+  B.start_block = T.start_block AND 
+  B.end_block = T.end_block AND 
+  B.number = T.block_number AND
+  to_date(CAST(B.timestamp as TIMESTAMP)) <= '{asof_date}' AND 
+  (from_address = '{wallet_address}' OR to_address = '{wallet_address}')
+GROUP BY token_address
+""".format(
+    wallet_address = spark.conf.get('wallet.address'), 
+    asof_date = spark.conf.get('start.date')
+)
+
+display(spark.sql(sql_statement))
+
+-- COMMAND ----------
+
+-- Debug above by providing individual rows to manually check
+SELECT 
+  token_address, from_address, to_address, 
+  CASE WHEN from_address = '0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff' THEN -1*value ELSE value END as value, 
+  to_date(CAST(timestamp AS TIMESTAMP)) as date
+FROM token_transfers T
+INNER JOIN blocks B ON B.number = T.block_number
+WHERE (T.from_address = '0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff' OR T.to_address = '0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff')
+
+-- COMMAND ----------
+
 -- MAGIC %md
 -- MAGIC ## Viz the transaction count over time (network use)
 
 -- COMMAND ----------
 
--- MAGIC %python
--- MAGIC from pyspark.sql import functions as F
--- MAGIC df = sqlContext.sql("SELECT transaction_count, timestamp FROM blocks")
--- MAGIC timedf = df.select("transaction_count", from_unixtime(col("timestamp"),"MM-dd-yyyy").alias("date"))
--- MAGIC 
--- MAGIC time = timedf.select("transaction_count", "date").groupBy('date').count()
--- MAGIC display(time)
+-- Refactor Brooke's answer into a single query
+SELECT 
+  to_date(CAST(timestamp as TIMESTAMP)) as date,
+  SUM(transaction_count) as transaction_count
+FROM blocks
+GROUP BY to_date(CAST(timestamp as TIMESTAMP))
+ORDER BY to_date(CAST(timestamp as TIMESTAMP))
 
 -- COMMAND ----------
 
