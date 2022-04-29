@@ -54,35 +54,29 @@ from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
 
 class TokenRecommender:
 
-    def __init__(self, data_path: str, model_name: str, min_USD_balance: int = 1, seed: int=1234)->None:
-        self.data_path = data_path
+    def __init__(self, model_name: str, min_USD_balance: int = 1, seed: int=1234)->None:
         self.model_name = model_name
         self.min_USD_balance = min_USD_balance
         self.seed = seed
     
         # Create an MLflow experiment for this model
-        #######################################################################################
-        ## WHERE ARE WE STORING THE EXPERIMENT??? I JUST HAVE IT UNDER ME
-        ########################################################################################
-        experiment_directory = "/Users/" + dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get() + "/" + self.model_name + "-experiment/"
+        experiment_directory = r'/Users/dcaramel@ur.rochester.edu/G0_1_Experiments'
         mlflow.set_experiment(experiment_directory)
     
         # split the data set into train, validation and test and cache them
         # We'll hold out 60% for training, 20% of our data for validation, and leave 20% for testing
-        self.raw_data = spark.read.format('delta').load(self.data_path)
-        self.raw_data = self.raw_data.filter(self.raw_data.Balance >= self.min_USD_balance).cache()
-       #######################################################################################
-        ## WHERE ARE WE STORING THE META DATA
-        ########################################################################################
-        self.metadata_df = spark.read.format('delta').load(self.data_path+"metadata").cache()
-        self.training_data_version = DeltaTable.forPath(spark, self.data_path+"triplets").history().head(1)[0]['version']
+        self.raw_data = spark.read.format('delta').load('/user/hive/warehouse/g01_db.db/silvertable_walletbalance/')
+#         self.raw_data = self.raw_data.filter(self.raw_data.Balance >= self.min_USD_balance).cache()
+
+        self.token_metadata_df = spark.read.format('delta').load('/user/hive/warehouse/g01_db.db/silvertable_ethereumtokens/').cache()
+        self.training_data_version = DeltaTable.forPath(spark, '/user/hive/warehouse/g01_db.db/silvertable_walletbalance/').history().head(1)[0]['version']
     
         (split_60_df, split_a_20_df, split_b_20_df) = self.raw_data.randomSplit([0.6, 0.2, 0.2], seed=self.seed)
         # Let's cache these datasets for performance
         self.training_df = split_60_df.cache()
         self.validation_df = split_a_20_df.cache()
         self.test_df = split_b_20_df.cache()
-    
+
         # Initialize our ALS learner
         als = ALS()
         als.setMaxIter(5)\
@@ -90,23 +84,28 @@ class TokenRecommender:
            .setItemCol('TokenID')\
            .setRatingCol('Balance')\
            .setUserCol('WalletID')\
-           .setColdStartStrategy('drop')
-
+           .setColdStartStrategy('drop')\
+           .setnonnegative=True
         # Now let's compute an evaluation metric for our test dataset, we Create an RMSE evaluator using the label and predicted columns
         self.reg_eval = RegressionEvaluator(predictionCol='prediction', labelCol='Balance', metricName='rmse')
 
         # Setup an ALS hyperparameter tuning grid search
+#         grid = ParamGridBuilder() \
+#           .addGrid(als.maxIter, [5, 10, 15]) \
+#           .addGrid(als.regParam, [0.15, 0.2, 0.25]) \
+#           .addGrid(als.rank, [4, 8, 12, 16, 20]) \
+#           .build()
         grid = ParamGridBuilder() \
-          .addGrid(als.maxIter, [5, 10, 15]) \
-          .addGrid(als.regParam, [0.15, 0.2, 0.25]) \
-          .addGrid(als.rank, [4, 8, 12, 16, 20]) \
+          .addGrid(als.maxIter, [5]) \
+          .addGrid(als.regParam, [0.15]) \
+          .addGrid(als.rank, [4]) \
           .build()
-
         # Create a cross validator, using the pipeline, evaluator, and parameter grid you created in previous steps.
-        self.cv = CrossValidator(estimator=als, 
-                                 evaluator=self.reg_eval, 
-                                 estimatorParamMaps=grid,
-                                 numFolds=3)
+#         self.cv = CrossValidator(estimator=als, 
+#                                  evaluator=self.reg_eval, 
+#                                  estimatorParamMaps=grid,
+#                                  numFolds=3)
+        self.cv = als
 
     def train(self):
         """
@@ -117,8 +116,8 @@ class TokenRecommender:
         # Setup the schema for the model
         input_schema = Schema(
             [
-                ColSpec('integer', 'new_songId'),
-                ColSpec('integer', 'new_userId')
+                ColSpec('integer', 'TokenID'),
+                ColSpec('integer', 'WalletID')
             ]
         )
         output_schema = Schema([ColSpec('double')])
@@ -128,12 +127,12 @@ class TokenRecommender:
         with mlflow.start_run(run_name=self.model_name+'-run') as run:
             mlflow.set_tags({'group': '	G01', 'class': 'DSCC-402'})
             mlflow.log_params({'user_rating_training_data_version': self.training_data_version, 
-                               'minimum_USD_balance':self.min_USD_balance, 
+                               'minimum_USD_balance': self.min_USD_balance, 
                                'seed': self.seed})
             
             # Run the cross validation on the training dataset. The cv.fit() call returns the best model it found.
             cv_model = self.cv.fit(self.training_df)
-            
+            print('trained')
             # Evaluate the best model's performance on the validation dataset and log the result.
             validation_metric = self.reg_eval.evaluate(cv_model.transform(self.validation_df))
             mlflow.log_metric('test_' + self.reg_eval.getMetricName(), validation_metric) 
@@ -148,19 +147,19 @@ class TokenRecommender:
         model_versions = []
         
         # Transition this model to staging and archive the current staging model if there is one
-        for mv in client.search_model_versions(f"name='{self.modelName}'"):
+        for mv in client.search_model_versions(f"name='{self.model_name}'"):
             model_versions.append(dict(mv)['version'])
             if dict(mv)['current_stage'] == 'Staging':
                 print("Archiving: {}".format(dict(mv)))
                 
                 # Archive the currently staged model
                 client.transition_model_version_stage(
-                    name=self.modelName,
+                    name=self.model_name,
                     version=dict(mv)['version'],
                     stage='Archived')
                 
         client.transition_model_version_stage(
-            name=self.modelName,
+            name=self.model_name,
             version=model_versions[0],  # this model (current build)
             stage='Staging')
 
@@ -181,38 +180,49 @@ class TokenRecommender:
         Method takes a specific WalletID and returns the tokens that they have listened to and a set of recommendations in rank order that they may like based on their listening history.
         """
         # Generate a dataframe of tokens that the user has held listened to
-        tokens_holding = self.raw_data.filter(self.raw_data.(WalletID) == userId) \
+        tokens_holding = self.raw_data.filter(self.raw_data('WalletID') == userId) \
                                                 .join(self.metadata_df, 'TokenID') \
-        #########################################################################
-        ## HELP HERE
-        #########################################################################
-                                                .select('new_songId', 'artist_name', 'title','Plays')
+                                                .select('TokenID', 'name', 'image','links')
 
         # Generate dataframe of unlistened tokens
-        unlistened_tokens = self.raw_data.filter(~ self.raw_data['TokenID'].isin([song['TokenID'] for song in tokens_holding.collect()])) \
+        unlistened_tokens = self.raw_data.filter(~ self.raw_data['TokenID'].isin([token['TokenID'] for token in tokens_holding.collect()])) \
                                                     .select('tokens_holding').withColumn('WalletID', F.lit(WalletID)).distinct()
 
         # Feed unlistened tokens into model for a predicted Balance
         model = mlflow.spark.load_model('models:/'+self.model_name+'/Staging')
-        predicted_listens = model.transform(unlistened_tokens)
+        predicted_tokens = model.transform(unlistened_tokens)
+        
+        return predicted_tokens
+#         predictions = predicted_tokens.join(self.raw_plays_df_with_int_ids, 'new_songId').join(self.metadata_df, 'songId').select('artist_name', 'title', 'prediction') \.distinct().orderBy('prediction', ascending = False)) 
         
         
-        # HELP WITH THE RETURN
-        return (tokens_holding.select('artist_name','title','Plays').orderBy('Plays', ascending = False), predicted_listens.join(self.raw_plays_df_with_int_ids, 'new_songId') \
-                         .join(self.metadata_df, 'songId') \
-                         .select('artist_name', 'title', 'prediction') \
-                         .distinct() \
-                         .orderBy('prediction', ascending = False)) 
+#         return (tokens_holding.select('artist_name','title','Plays').orderBy('Plays', ascending = False), predicted_listens.join(self.raw_plays_df_with_int_ids, 'new_songId') \
+#                          .join(self.metadata_df, 'songId') \
+#                          .select('artist_name', 'title', 'prediction') \
+#                          .distinct() \
+#                          .orderBy('prediction', ascending = False)) 
 
-    def recommend_for_wallets(self, num_of_tokens: int) -> DataFrame:
-        """
-        Generate a data frame that recommends a number of songs for each of the users in the dataset (model)
-        """
-        #########################################################################
-        ## THIS NEEDS SOME LOVE
-        #########################################################################
-        model = mlflow.spark.load_model('models:/'+self.model_name+'/Staging')
-        return model.stages[0].recommendForAllUsers(num_of_tokens)
+#     def recommend_for_wallets(self, num_of_tokens: int) -> DataFrame:
+#         """
+#         Generate a data frame that recommends a number of songs for each of the users in the dataset (model)
+#         """
+#         #########################################################################
+#         ## THIS NEEDS SOME LOVE
+#         #########################################################################
+#         model = mlflow.spark.load_model('models:/'+self.model_name+'/Staging')
+#         return model.stages[0].recommendForAllUsers(num_of_tokens)
+
+# COMMAND ----------
+
+clf = TokenRecommender(model_name='FirstAttempt', min_USD_balance=20, seed=1234)
+
+# COMMAND ----------
+
+clf.train()
+
+# COMMAND ----------
+
+
 
 # COMMAND ----------
 
