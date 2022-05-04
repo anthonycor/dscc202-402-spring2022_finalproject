@@ -66,7 +66,7 @@ class TokenRecommender:
         # split the data set into train, validation and test and cache them
         # We'll hold out 60% for training, 20% of our data for validation, and leave 20% for testing
         self.raw_data = spark.read.format('delta').load('/user/hive/warehouse/g01_db.db/silvertable_walletbalance/')
-#         self.raw_data = self.raw_data.filter(self.raw_data.Balance >= self.min_USD_balance).cache()
+        self.raw_data = self.raw_data.filter(self.raw_data.Balance >= self.min_USD_balance).cache()
 
         self.token_metadata_df = spark.read.format('delta').load('/user/hive/warehouse/g01_db.db/silvertable_ethereumtokens/').cache()
         self.training_data_version = DeltaTable.forPath(spark, '/user/hive/warehouse/g01_db.db/silvertable_walletbalance/').history().head(1)[0]['version']
@@ -85,7 +85,7 @@ class TokenRecommender:
            .setRatingCol('Balance')\
            .setUserCol('WalletID')\
            .setColdStartStrategy('drop')\
-           .setnonnegative=True
+           .setlambda_=0.1
         # Now let's compute an evaluation metric for our test dataset, we Create an RMSE evaluator using the label and predicted columns
         self.reg_eval = RegressionEvaluator(predictionCol='prediction', labelCol='Balance', metricName='rmse')
 
@@ -98,7 +98,7 @@ class TokenRecommender:
         grid = ParamGridBuilder() \
           .addGrid(als.maxIter, [5]) \
           .addGrid(als.regParam, [0.15]) \
-          .addGrid(als.rank, [4]) \
+          .addGrid(als.rank, [20]) \
           .build()
         # Create a cross validator, using the pipeline, evaluator, and parameter grid you created in previous steps.
 #         self.cv = CrossValidator(estimator=als, 
