@@ -48,7 +48,7 @@ spark.conf.set('start.date', start_date)
 
 from delta.tables import DeltaTable
 from pyspark.sql.functions import col, coalesce
-from pyspark.sql.types import _parse_datatype_string
+from pyspark.sql.types import _parse_datatype_string, IntegerType
 sqlContext.setConf('spark.sql.shuffle.partitions', 'auto')
 
 # COMMAND ----------
@@ -188,8 +188,9 @@ df = df.join(token_lkp_df, (df.TokenAddress == token_lkp_df.contract_address), '
 df = df.join(wallet_lkp_df, (df.Walletaddress == wallet_lkp_df.WalletHash), 'inner')
 df = df.drop(*('Total_From_Value', 'Total_To_Value', 'Walletaddress', 'TokenAddress', 'contract_address', 'symbol', 'name', 'description', 'links', 'image', 'price_usd', 'WalletHash', 'address'))
 df = df.na.drop()
+df = df.withColumn('Balance', df.Balance.cast('integer'))
 
-assert df.schema == StructType([StructField('Balance', DoubleType(), False), StructField('TokenID', IntegerType(), True), StructField('WalletID', IntegerType(), True)]), "Incorrect Silver Wallet Balance schema"
+assert df.schema == _parse_datatype_string("Balance Integer, TokenID Integer, WalletID Integer"), "Incorrect Silver Wallet Balance schema"
 print("Assertion passed.")
 
 df.write.mode('overwrite').option('overwriteSchema', 'true').format('delta').saveAsTable('G01_db.SilverTable_WalletBalance')
@@ -197,6 +198,17 @@ df.write.mode('overwrite').option('overwriteSchema', 'true').format('delta').sav
 # COMMAND ----------
 
 spark.sql("OPTIMIZE G01_db.SilverTable_WalletBalance ZORDER BY (TokenID)")
+
+# COMMAND ----------
+
+sql_statement = """SELECT EW.WalletHash, ET.name, ET.contract_address, UPPER(ET.symbol) AS symbol, ET.links, ET.image
+                      FROM G01_db.SilverTable_WalletBalance WB
+                      INNER JOIN G01_db.SilverTable_EthereumTokens ET ON ET.TokenID=WB.TokenID
+                      INNER JOIN G01_db.SilverTable_ExternalWallets EW ON EW.WalletID=WB.WalletID
+                          WHERE WalletHash='0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff'"""
+df = spark.sql(sql_statement)
+
+df.write.mode('overwrite').option('overwriteSchema', 'true').format('delta').saveAsTable('G01_db.GoldTable_Recommendations')
 
 # COMMAND ----------
 

@@ -17,7 +17,7 @@
 # COMMAND ----------
 
 # Grab the global variables
-wallet_address,start_date = Utils.create_widgets()
+wallet_address, start_date = Utils.create_widgets()
 print(wallet_address, start_date)
 
 # COMMAND ----------
@@ -27,7 +27,12 @@ print(wallet_address, start_date)
 
 # COMMAND ----------
 
+sql_statement = "SELECT * FROM G01_db.SilverTable_externalwallets WHERE WalletHash='" + str(wallet_address) + "';"
+df = spark.sql(sql_statement)
 
+# COMMAND ----------
+
+display(df.toPandas().to_html())
 
 # COMMAND ----------
 

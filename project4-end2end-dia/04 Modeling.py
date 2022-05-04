@@ -85,7 +85,8 @@ class TokenRecommender:
            .setRatingCol('Balance')\
            .setUserCol('WalletID')\
            .setColdStartStrategy('drop')\
-           .setlambda_=0.1
+           .setImplicitPrefs(True)\
+           .setlambda_=0.2
         # Now let's compute an evaluation metric for our test dataset, we Create an RMSE evaluator using the label and predicted columns
         self.reg_eval = RegressionEvaluator(predictionCol='prediction', labelCol='Balance', metricName='rmse')
 
@@ -101,11 +102,10 @@ class TokenRecommender:
           .addGrid(als.rank, [20]) \
           .build()
         # Create a cross validator, using the pipeline, evaluator, and parameter grid you created in previous steps.
-#         self.cv = CrossValidator(estimator=als, 
-#                                  evaluator=self.reg_eval, 
-#                                  estimatorParamMaps=grid,
-#                                  numFolds=3)
-        self.cv = als
+        self.cv = CrossValidator(estimator=als, 
+                                 evaluator=self.reg_eval,
+                                 estimatorParamMaps=grid,
+                                 numFolds=3)
 
     def train(self):
         """
@@ -117,7 +117,8 @@ class TokenRecommender:
         input_schema = Schema(
             [
                 ColSpec('integer', 'TokenID'),
-                ColSpec('integer', 'WalletID')
+                ColSpec('integer', 'WalletID'),
+                ColSpec('integer', 'Balance')
             ]
         )
         output_schema = Schema([ColSpec('double')])
@@ -132,12 +133,12 @@ class TokenRecommender:
             
             # Run the cross validation on the training dataset. The cv.fit() call returns the best model it found.
             cv_model = self.cv.fit(self.training_df)
-            print('trained')
             # Evaluate the best model's performance on the validation dataset and log the result.
             validation_metric = self.reg_eval.evaluate(cv_model.transform(self.validation_df))
             mlflow.log_metric('test_' + self.reg_eval.getMetricName(), validation_metric) 
             
             # Log the best model.
+            self.model = cv_model.bestModel
             mlflow.spark.log_model(spark_model=cv_model.bestModel, signature=signature,
                                    artifact_path='als-model', registered_model_name=self.model_name)
         
@@ -175,22 +176,23 @@ class TokenRecommender:
         print("Staging Model Root-mean-square error on the test dataset = " + str(RMSE))
   
 
-    def recommend(self, WalletID: int) -> (DataFrame, DataFrame):
+    def recommend(self):
         """
         Method takes a specific WalletID and returns the tokens that they have listened to and a set of recommendations in rank order that they may like based on their listening history.
         """
+        predicted_tokens = self.model(self.raw_data.WalletID)
         # Generate a dataframe of tokens that the user has held listened to
-        tokens_holding = self.raw_data.filter(self.raw_data('WalletID') == userId) \
-                                                .join(self.metadata_df, 'TokenID') \
-                                                .select('TokenID', 'name', 'image','links')
+#         tokens_holding = self.raw_data.filter(self.raw_data('WalletID') == userId) \
+#                                                 .join(self.metadata_df, 'TokenID') \
+#                                                 .select('TokenID', 'name', 'image','links')
 
-        # Generate dataframe of unlistened tokens
-        unlistened_tokens = self.raw_data.filter(~ self.raw_data['TokenID'].isin([token['TokenID'] for token in tokens_holding.collect()])) \
-                                                    .select('tokens_holding').withColumn('WalletID', F.lit(WalletID)).distinct()
+#         # Generate dataframe of unlistened tokens
+#         unlistened_tokens = self.raw_data.filter(~ self.raw_data['TokenID'].isin([token['TokenID'] for token in tokens_holding.collect()])) \
+#                                                     .select('tokens_holding').withColumn('WalletID', F.lit(WalletID)).distinct()
 
-        # Feed unlistened tokens into model for a predicted Balance
-        model = mlflow.spark.load_model('models:/'+self.model_name+'/Staging')
-        predicted_tokens = model.transform(unlistened_tokens)
+#         # Feed unlistened tokens into model for a predicted Balance
+#         model = mlflow.spark.load_model('models:/'+self.model_name+'/Staging')
+#         predicted_tokens = model.transform(unlistened_tokens)
         
         return predicted_tokens
 #         predictions = predicted_tokens.join(self.raw_plays_df_with_int_ids, 'new_songId').join(self.metadata_df, 'songId').select('artist_name', 'title', 'prediction') \.distinct().orderBy('prediction', ascending = False)) 
@@ -218,11 +220,15 @@ clf = TokenRecommender(model_name='FirstAttempt', min_USD_balance=20, seed=1234)
 
 # COMMAND ----------
 
+display(clf.raw_data.select('TokenID'))
+
+# COMMAND ----------
+
 clf.train()
 
 # COMMAND ----------
 
-
+display(clf.model.recommendForUserSubset(clf.test_df.select('WalletID'), 5))
 
 # COMMAND ----------
 
