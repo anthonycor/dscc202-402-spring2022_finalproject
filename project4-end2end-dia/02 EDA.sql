@@ -38,33 +38,27 @@
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Q: What is the maximum block number and date of block in the database
+-- MAGIC ## Q: What is the maximum block number and date of block in the database 1
 
 -- COMMAND ----------
 
 -- MAGIC %python
--- MAGIC display(spark.sql("""SELECT number, timestamp FROM blocks 
+-- MAGIC display(spark.sql("""SELECT number, CAST(timestamp AS TIMESTAMP) FROM blocks 
 -- MAGIC     WHERE number IN (SELECT MAX(number) FROM blocks)"""))
 
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Q: At what block did the first ERC20 transfer happen?
+-- MAGIC ## Q: At what block did the first ERC20 transfer happen? 2
 
 -- COMMAND ----------
 
--- MAGIC %python
--- MAGIC 
--- MAGIC sql_statement = """
--- MAGIC SELECT MIN(block_number) FROM token_transfers
--- MAGIC """
--- MAGIC df = spark.sql(sql_statement)
--- MAGIC display(df)
+SELECT MIN(block_number) FROM token_transfers
 
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Q: How many ERC20 compatible contracts are there on the blockchain?
+-- MAGIC ## Q: How many ERC20 compatible contracts are there on the blockchain? 3
 
 -- COMMAND ----------
 
@@ -77,18 +71,42 @@ FROM token_transfers
 
 -- COMMAND ----------
 
--- MAGIC %md 
--- MAGIC ## Q: What percentage of transactions are calls to contracts
+-- This assumes all tokens are ERC20
+SELECT COUNT(DISTINCT address) FROM tokens
 
 -- COMMAND ----------
 
--- MAGIC %python
--- MAGIC ## NO IDEA WHAT IN THE HELL a CALLS to CONTRACTS IS
+-- Count unique valid etheruem token [contract] addresses
+SELECT 
+  COUNT(DISTINCT contract_address)
+FROM token_prices_usd 
+WHERE asset_platform_id = 'ethereum' AND substr(contract_address, 1, 2) = '0x'
+
+-- COMMAND ----------
+
+SELECT
+  COUNT(DISTINCT address)
+FROM silver_contracts
+WHERE is_erc20 = "True"
+
+-- COMMAND ----------
+
+-- MAGIC %md 
+-- MAGIC ## Q: What percentage of transactions are calls to contracts 4
+
+-- COMMAND ----------
+
+SELECT
+  SUM(CAST((C.address IS NOT NULL) AS INTEGER)) as to_contract,
+  COUNT(1) as total_transactions,
+  SUM(CAST((C.address IS NOT NULL) AS INTEGER))/COUNT(1) as percentage
+FROM transactions T
+LEFT JOIN contracts C ON C.address = T.to_address
 
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Q: What are the top 100 tokens based on transfer count?
+-- MAGIC ## Q: What are the top 100 tokens based on transfer count? 5
 
 -- COMMAND ----------
 
@@ -102,20 +120,28 @@ LIMIT 100
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Q: What fraction of ERC-20 transfers are sent to new addresses
+-- MAGIC ## Q: What fraction of ERC-20 transfers are sent to new addresses 6
 -- MAGIC (i.e. addresses that have a transfer count of 1 meaning there are no other transfers to this address for this token this is the first)
 
 -- COMMAND ----------
 
-SELECT token_address, from_address, Count(*)
-FROM token_transfers
-group by token_address, from_address
-HAVING count(*) = 1
+-- Refactor Stefano's answer to be a fraction not just the 
+-- individual rows where transaction count to address is 1
+SELECT
+  SUM(CAST((transaction_count = 1) AS INTEGER)) as single_transfers,
+  COUNT(1) as total_transfers,
+  SUM(CAST((transaction_count = 1) AS INTEGER))/COUNT(1) as percentage
+FROM (
+  SELECT 
+    token_address, to_address, COUNT(transaction_hash) as transaction_count
+  FROM token_transfers
+  GROUP BY token_address, to_address
+)
 
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Q: In what order are transactions included in a block in relation to their gas price?
+-- MAGIC ## Q: In what order are transactions included in a block in relation to their gas price? 7
 -- MAGIC - hint: find a block with multiple transactions 
 -- MAGIC 
 -- MAGIC ## A: The order of the transaction included in a block are in gas price descending order.
@@ -127,7 +153,7 @@ HAVING count(*) = 1
 -- last partition of block table
 SELECT number, transaction_count
 FROM blocks
-WHERE start_block>=14030000 start_block>=14030000 and transaction_count > 1
+WHERE start_block>=14030000 and transaction_count > 1
 LIMIT 10
 */
 
@@ -141,12 +167,13 @@ WHERE start_block>=14030000 and block_number = 14030401
 -- COMMAND ----------
 
 -- MAGIC %md
--- MAGIC ## Q: What was the highest transaction throughput in transactions per second?
+-- MAGIC ## Q: What was the highest transaction throughput in transactions per second? 8
 -- MAGIC hint: assume 15 second block time
 
 -- COMMAND ----------
 
--- TBD
+SELECT MAX(transaction_count)/15 as max_tps
+FROM blocks
 
 -- COMMAND ----------
 
@@ -156,7 +183,12 @@ WHERE start_block>=14030000 and block_number = 14030401
 
 -- COMMAND ----------
 
--- TBD
+-- MAGIC %sql
+-- MAGIC SELECT sum(total_supply)/1000000000000000000 as ether_volume
+-- MAGIC FROM (SELECT *
+-- MAGIC FROM token_prices_usd
+-- MAGIC LEFT JOIN tokens
+-- MAGIC ON token_prices_usd.symbol = tokens.symbol)
 
 -- COMMAND ----------
 
@@ -177,16 +209,12 @@ FROM Receipts
 
 -- COMMAND ----------
 
--- MAGIC %python
--- MAGIC 
--- MAGIC sql_statement = """
--- MAGIC SELECT block_number, COUNT(hash) FROM transactions
--- MAGIC     GROUP BY block_number
--- MAGIC         ORDER BY block_number DESC
--- MAGIC             LIMIT 1
--- MAGIC """
--- MAGIC df = spark.sql(sql_statement)
--- MAGIC display(df)
+SELECT 
+  block_number, COUNT(transaction_hash) transfer_count
+FROM token_transfers
+GROUP BY block_number
+ORDER BY COUNT(transaction_hash) DESC
+LIMIT 1
 
 -- COMMAND ----------
 
@@ -217,12 +245,61 @@ FROM Receipts
 
 -- COMMAND ----------
 
+-- Anthony's attempt to INNER JOIN token_transfers and blocks
+-- and sum values for each token_address for transfers on or before
+-- date for given wallet address
+%python
+sqlContext.setConf('spark.sql.shuffle.partitions', 'auto')
+ 
+sql_statement = """
+SELECT
+  token_address, 
+  SUM(
+    CASE
+      WHEN from_address = '{wallet_address}' THEN -1*value
+      ELSE value
+    END
+   ) as value
+FROM token_transfers T
+INNER JOIN blocks B ON 
+  B.start_block = T.start_block AND 
+  B.end_block = T.end_block AND 
+  B.number = T.block_number AND
+  to_date(CAST(B.timestamp as TIMESTAMP)) <= '{asof_date}' AND 
+  (from_address = '{wallet_address}' OR to_address = '{wallet_address}')
+GROUP BY token_address
+""".format(
+    wallet_address = spark.conf.get('wallet.address'), 
+    asof_date = spark.conf.get('start.date')
+)
+
+display(spark.sql(sql_statement))
+
+-- COMMAND ----------
+
+-- Debug above by providing individual rows to manually check
+SELECT 
+  token_address, from_address, to_address, 
+  CASE WHEN from_address = '0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff' THEN -1*value ELSE value END as value, 
+  to_date(CAST(timestamp AS TIMESTAMP)) as date
+FROM token_transfers T
+INNER JOIN blocks B ON B.number = T.block_number
+WHERE (T.from_address = '0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff' OR T.to_address = '0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff')
+
+-- COMMAND ----------
+
 -- MAGIC %md
 -- MAGIC ## Viz the transaction count over time (network use)
 
 -- COMMAND ----------
 
--- TBD
+-- Refactor Brooke's answer into a single query
+SELECT 
+  to_date(CAST(timestamp as TIMESTAMP)) as date,
+  SUM(transaction_count) as transaction_count
+FROM blocks
+GROUP BY to_date(CAST(timestamp as TIMESTAMP))
+ORDER BY to_date(CAST(timestamp as TIMESTAMP))
 
 -- COMMAND ----------
 
@@ -232,11 +309,33 @@ FROM Receipts
 
 -- COMMAND ----------
 
+-- Ugly double aggregation sub-queries...
+-- inner most query groups token_transfers by block
+-- then joins blocks to get date
+-- final, outer, aggregation by date to sum total token transfers (in all blocks on those dates)
 SELECT
-  token_address, from_address, to_address, value, block_number, timestamp, CAST((timestamp/1e6) AS TIMESTAMP), transaction_count
-FROM token_transfers TT
-LEFT JOIN blocks B ON B.number = TT.block_number
-WHERE token_address = "" AND CAST((timestamp/1e6) AS TIMESTAMP) >= '2021-12-25'
+  block_date as transfer_date,
+  SUM(num_transactions) total_transfers
+FROM (
+  -- This sub-query gets the date associated with the token transfers' block
+  SELECT
+    block_number, 
+    num_transactions,
+    to_date(CAST(timestamp AS TIMESTAMP)) as block_date
+  FROM (
+    -- This sub-query counts token transfers by block
+    SELECT
+      block_number,
+      COUNT(transaction_hash) num_transactions,
+      start_block, 
+      end_block
+    FROM token_transfers TT
+    GROUP BY block_number, start_block, end_block
+  ) TT
+  LEFT JOIN blocks B ON B.number = TT.block_number AND B.start_block >= TT.start_block AND B.end_block <= TT.end_block
+)
+GROUP BY block_date
+ORDER BY block_date ASC 
 
 -- COMMAND ----------
 

@@ -27,12 +27,38 @@ print(wallet_address, start_date)
 
 # COMMAND ----------
 
-sql_statement = "SELECT * FROM G01_db.SilverTable_externalwallets WHERE WalletHash='" + str(wallet_address) + "';"
-df = spark.sql(sql_statement)
+recommendations_statement = """
+SELECT *
+FROM goldtable_recommendations
+WHERE WalletHash = '{0}'
+""".format(str(wallet_address))
 
-# COMMAND ----------
+recommendations = spark.sql(recommendations_statement).toPandas()
 
-display(df.toPandas().to_html())
+if(recommendations.shape[0] == 0):
+    recommendations_html = "<tr><td>Wallet address not found.</td></tr>"
+else:
+    recommendations_html = ""
+    for index, row in recommendations.iterrows():
+        recommendations_html += """
+        <tr>
+          <td style="padding:15px"><a href="{0}"><img src="{1}"></a></td>
+          <td style="padding:15px">{2} ({3})</td>
+          <td style="padding:15px">
+            <a href="https://etherscan.io/address/{4}">
+              <img src="https://etherscan.io/images/brandassets/etherscan-logo-circle.jpg" width="25" height="25">
+            </a>
+          </td>
+        </tr>
+        """.format(row["links"], row["image"], row["name"], row["symbol"], row["contract_address"])
+    
+displayHTML("""
+<h2>Recommend Tokens for user address:</h2>
+<p style="color:666666;font-size:1.25em">{0}</p>
+<table border=0>
+{1}
+</table>
+""".format(str(wallet_address), recommendations_html))
 
 # COMMAND ----------
 
