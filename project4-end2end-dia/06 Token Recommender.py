@@ -31,6 +31,7 @@ recommendations_statement = """
 SELECT *
 FROM goldtable_recommendations
 WHERE WalletHash = '{0}'
+ORDER BY rating DESC
 """.format(str(wallet_address))
 
 recommendations = spark.sql(recommendations_statement).toPandas()
@@ -59,6 +60,16 @@ displayHTML("""
 {1}
 </table>
 """.format(str(wallet_address), recommendations_html))
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM SilverTable_ExternalWallets WHERE WalletHash='0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff';
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM SilverTable_WalletBalance WHERE WalletID=48058973;
 
 # COMMAND ----------
 
