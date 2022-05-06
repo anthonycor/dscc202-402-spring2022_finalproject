@@ -61,8 +61,8 @@ def evaluate_push_staging_production(staging_name, staging_version, production_n
     print(f'Production Model Root-mean-square error on the test dataset = {predict_RMSE}')
     
     f, ax = plt.subplots(figsize=(20,8))  # A figure with size attributes
-    errors = [(staging_name + ' Version ' + str(staging_version), round(staging_RMSE, 3)),
-              (production_name + ' Version ' + str(production_version), round(predict_RMSE, 3))]
+    errors = [(staging_name + ' Version ' + str(staging_version), staging_RMSE),
+              (production_name + ' Version ' + str(production_version), predict_RMSE)]
     errors = pd.DataFrame(errors, columns=['Model', 'RMSE'])
     ax = sns.barplot(x='Model', y='RMSE', data=errors)
     plt.show()
