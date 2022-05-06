@@ -62,6 +62,13 @@ dbutils.fs.rm('/user/hive/warehouse/g01_db.db/', recurse=True)
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC DROP SCHEMA IF EXISTS G01_DB CASCADE;
+# MAGIC 
+# MAGIC CREATE SCHEMA G01_DB;
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Applicable Transfers (Transfers that have a USD conversion)
 
@@ -224,3 +231,7 @@ display(DeltaTable.forPath(spark, '/user/hive/warehouse/g01_db.db/silvertable_wa
 
 # Return Success
 dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
+
+# COMMAND ----------
+
+

@@ -166,17 +166,6 @@ class TokenRecommender:
             name=self.model_name,
             version=model_versions[0],  # this model (current build)
             stage='Staging')
-
-    def test(self):
-        """
-        Test the model in staging with the test dataset generated when this object was instantiated.
-        """
-        # THIS SHOULD BE THE VERSION JUST TRANINED
-        model = mlflow.spark.load_model('models:/' + self.model_name + '/Staging')
-        # View the predictions
-        test_predictions = model.transform(self.test_df)
-        RMSE = self.reg_eval.evaluate(test_predictions)
-        print("Staging Model Root-mean-square error on the test dataset = " + str(RMSE))
   
 
     def recommend(self, recommend_model):
@@ -204,7 +193,7 @@ class TokenRecommender:
     
     def recommend_new_gold_table_version(self):
         predictions = self.recommend(self.model)
-        predictions.write.mode('overwrite').option('overwriteSchema', 'true').format('delta').saveAsTable('G01_db.GoldTable_Recommendations').partitionBy('WalletHash')
+        predictions.write.mode('overwrite').option('overwriteSchema', 'true').format('delta').partitionBy('WalletHash').saveAsTable('G01_db.GoldTable_Recommendations')
         
         return True
 
