@@ -31,6 +31,7 @@ recommendations_statement = """
 SELECT *
 FROM goldtable_recommendations
 WHERE WalletHash = '{0}'
+ORDER BY rating DESC
 """.format(str(wallet_address))
 
 recommendations = spark.sql(recommendations_statement).toPandas()

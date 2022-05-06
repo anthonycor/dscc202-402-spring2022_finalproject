@@ -94,15 +94,10 @@ class TokenRecommender:
         self.reg_eval = RegressionEvaluator(predictionCol='prediction', labelCol='Balance', metricName='rmse')
 
         # Setup an ALS hyperparameter tuning grid search
-#         grid = ParamGridBuilder() \
-#           .addGrid(als.maxIter, [5, 10, 15]) \
-#           .addGrid(als.regParam, [0.15, 0.2, 0.25]) \
-#           .addGrid(als.rank, [4, 8, 12, 16, 20]) \
-#           .build()
         grid = ParamGridBuilder() \
-          .addGrid(als.maxIter, [5]) \
-          .addGrid(als.regParam, [0.15]) \
-          .addGrid(als.rank, [20]) \
+          .addGrid(als.maxIter, [5, 10, 15]) \
+          .addGrid(als.regParam, [0.15, 0.2, 0.25]) \
+          .addGrid(als.rank, [8, 12, 16, 20]) \
           .build()
         # Create a cross validator, using the pipeline, evaluator, and parameter grid you created in previous steps.
         self.cv = CrossValidator(estimator=als, 
@@ -166,17 +161,6 @@ class TokenRecommender:
             name=self.model_name,
             version=model_versions[0],  # this model (current build)
             stage='Staging')
-
-    def test(self):
-        """
-        Test the model in staging with the test dataset generated when this object was instantiated.
-        """
-        # THIS SHOULD BE THE VERSION JUST TRANINED
-        model = mlflow.spark.load_model('models:/' + self.model_name + '/Staging')
-        # View the predictions
-        test_predictions = model.transform(self.test_df)
-        RMSE = self.reg_eval.evaluate(test_predictions)
-        print("Staging Model Root-mean-square error on the test dataset = " + str(RMSE))
   
 
     def recommend(self, recommend_model):
@@ -184,7 +168,7 @@ class TokenRecommender:
         Method takes a specific WalletID and returns the tokens that they have listened to and a set of recommendations in rank order that they may like based on their listening history.
         """
 
-        predictions = recommend_model.recommendForUserSubset(clf.test_df.select('WalletID'), 1000)
+        predictions = recommend_model.recommendForUserSubset(self.raw_data.select('WalletID'), 100)
         predictions = predictions.withColumn('recommendations', 
                                              F.explode(predictions.recommendations)).select('WalletID', col('recommendations')['TokenID'].alias('TokenID'), col('recommendations')['rating'].alias('rating'))
         predictions = predictions.join(self.raw_data, ((predictions.WalletID == self.raw_data.WalletID) & (predictions.TokenID == self.raw_data.TokenID)), 'left_anti')
@@ -204,13 +188,13 @@ class TokenRecommender:
     
     def recommend_new_gold_table_version(self):
         predictions = self.recommend(self.model)
-        predictions.write.mode('overwrite').option('overwriteSchema', 'true').format('delta').saveAsTable('G01_db.GoldTable_Recommendations').partitionBy('WalletHash')
+        predictions.write.mode('overwrite').option('overwriteSchema', 'true').format('delta').saveAsTable('G01_db.GoldTable_Recommendations')
         
         return True
 
 # COMMAND ----------
 
-clf = TokenRecommender(model_name='FirstAttempt', min_USD_balance=20, seed=1234)
+clf = TokenRecommender(model_name='HappyDays', min_USD_balance=20, seed=1234)
 
 # COMMAND ----------
 

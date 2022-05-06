@@ -62,16 +62,44 @@ dbutils.fs.rm('/user/hive/warehouse/g01_db.db/', recurse=True)
 
 # COMMAND ----------
 
+# MAGIC %sql
+# MAGIC DROP SCHEMA IF EXISTS G01_DB CASCADE;
+# MAGIC 
+# MAGIC CREATE SCHEMA G01_DB;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC <img src="https://raw.githubusercontent.com/anthonycor/dscc202-402-spring2022_finalproject/a98d08a03070cfbc4d696f3ea55a2104e52db8a6/project4-end2end-dia/diagram_for_final.png">
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Applicable Transfers (Transfers that have a USD conversion)
+
+# COMMAND ----------
+
+# # Grab all records that have a USD conversion & transfer occured prior to posted date
+# sql_statement = """
+# SELECT TT.*, USD.price_usd, TT.Value*USD.price_usd AS USDValue
+#     FROM (SELECT * FROM blocks WHERE CAST((timestamp/1e6) AS TIMESTAMP) <='""" + start_date + """') AS B
+#     INNER JOIN token_transfers TT ON TT.block_number = B.number
+#     INNER JOIN (SELECT DISTINCT * FROM token_prices_usd WHERE asset_platform_id == 'ethereum') AS USD ON TT.token_address = USD.contract_address
+# """
+# erc_token_transactions = spark.sql(sql_statement)
+
+# expected_ddl_schema = """token_address String, from_address String, to_address String, value Decimal(38,0), transaction_hash String, log_index Long, block_number Long, start_block Long, end_block Long, price_usd Double, USDValue Double"""
+# assert erc_token_transactions.schema == _parse_datatype_string(expected_ddl_schema), "Incorrect Silver ERC20 Transactions schema"
+# print("Assertion passed.")
+
+# erc_token_transactions.write.mode('overwrite').option('mergeSchema', 'true').format('delta').partitionBy('start_block', 'end_block').saveAsTable('G01_db.SilverTable_ERC20Transactions')
 
 # COMMAND ----------
 
 # Grab all records that have a USD conversion & transfer occured prior to posted date
 sql_statement = """
 SELECT TT.*, USD.price_usd, TT.Value*USD.price_usd AS USDValue
-    FROM (SELECT * FROM blocks WHERE CAST((timestamp/1e6) AS TIMESTAMP) <='""" + start_date + """') AS B
-    INNER JOIN token_transfers TT ON TT.block_number = B.number
+    FROM token_transfers TT
     INNER JOIN (SELECT DISTINCT * FROM token_prices_usd WHERE asset_platform_id == 'ethereum') AS USD ON TT.token_address = USD.contract_address
 """
 erc_token_transactions = spark.sql(sql_statement)
@@ -80,7 +108,7 @@ expected_ddl_schema = """token_address String, from_address String, to_address S
 assert erc_token_transactions.schema == _parse_datatype_string(expected_ddl_schema), "Incorrect Silver ERC20 Transactions schema"
 print("Assertion passed.")
 
-erc_token_transactions.write.mode('overwrite').option('mergeSchema', 'true').format('delta').partitionBy('start_block', 'end_block').saveAsTable('G01_db.SilverTable_ERC20Transactions')
+erc_token_transactions.write.format('delta').partitionBy('start_block', 'end_block').saveAsTable('G01_db.SilverTable_ERC20Transactions')
 
 # COMMAND ----------
 
@@ -103,6 +131,8 @@ SELECT ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) as WalletID, WalletHash FROM
         (SELECT to_address as C FROM G01_db.SilverTable_ERC20Transactions))
 """
 df = spark.sql(sql_statement)
+contracts_df = spark.sql(r"SELECT address FROM silver_contracts WHERE is_erc20='True'")
+df = df.join(contracts_df, (df.WalletHash == contracts_df.address), 'left_anti').select('WalletID', 'WalletHash')
 
 expected_ddl_schema = "WalletID Integer, WalletHash String"
 assert df.schema == _parse_datatype_string(expected_ddl_schema), "Incorrect Silver External Wallets schema"
@@ -224,3 +254,7 @@ display(DeltaTable.forPath(spark, '/user/hive/warehouse/g01_db.db/silvertable_wa
 
 # Return Success
 dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
+
+# COMMAND ----------
+
+
