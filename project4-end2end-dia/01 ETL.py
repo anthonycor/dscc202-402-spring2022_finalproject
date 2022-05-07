@@ -108,7 +108,7 @@ expected_ddl_schema = """token_address String, from_address String, to_address S
 assert erc_token_transactions.schema == _parse_datatype_string(expected_ddl_schema), "Incorrect Silver ERC20 Transactions schema"
 print("Assertion passed.")
 
-erc_token_transactions.write.mode('overwrite').option('mergeSchema', 'true').format('delta').partitionBy('start_block', 'end_block').saveAsTable('G01_db.SilverTable_ERC20Transactions')
+erc_token_transactions.write.format('delta').partitionBy('start_block', 'end_block').saveAsTable('G01_db.SilverTable_ERC20Transactions')
 
 # COMMAND ----------
 

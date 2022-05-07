@@ -63,15 +63,5 @@ displayHTML("""
 
 # COMMAND ----------
 
-# MAGIC %sql
-# MAGIC SELECT * FROM SilverTable_ExternalWallets WHERE WalletHash='0xf02d7ee27ff9b2279e76a60978bf8cca9b18a3ff';
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT * FROM SilverTable_WalletBalance WHERE WalletID=48058973;
-
-# COMMAND ----------
-
 # Return Success
 dbutils.notebook.exit(json.dumps({"exit_code": "OK"}))
